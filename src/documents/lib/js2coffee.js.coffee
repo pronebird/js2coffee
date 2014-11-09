@@ -584,14 +584,6 @@ class Builder
   'for': (n) ->
     c = new Code
 
-    if n.setup?
-      c.add "#{@build n.setup}\n"
-
-    if n.condition?
-      c.add "while #{@build n.condition}\n"
-    else
-      c.add "loop"
-
     # insert n.update before continue statement
     insertUpdate = (self, parent, i) ->
       if self.isA('continue')
@@ -632,10 +624,30 @@ class Builder
         for child, i in children
           insertUpdate child, self, i
 
-    insertUpdate n.body, n  if n.update?
+    if n.setup?
+      c.add "#{@build n.setup}\n"
+
+    isForLoop = false
+
+    if n.condition?
+      iterator = n.condition.left()
+      till = n.condition.right()
+      crement = n.update?.isA('++') or n.update?.isA('--')
+      operator = '...'  if n.condition.isA('<') or n.condition.isA('>')
+      operator = '..' if n.condition.isA('<=') or n.condition.isA('>=')
+
+      if n.update? and operator? and crement
+        c.add "for #{@build iterator} in [#{@build iterator}#{operator}#{@build till}]\n"
+        isForLoop = true
+      else
+        c.add "while #{@build n.condition}\n"
+    else
+      c.add "loop"
+
+    insertUpdate n.body, n  if n.update? and not isForLoop
 
     c.scope @body(n.body)
-    c.scope @body(n.update)  if n.update?
+    c.scope @body(n.update)  if n.update? and not isForLoop
     @l(n)+c
 
   'for_in': (n) ->
