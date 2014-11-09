@@ -624,30 +624,64 @@ class Builder
         for child, i in children
           insertUpdate child, self, i
 
-    if n.setup?
-      c.add "#{@build n.setup}\n"
-
-    isForLoop = false
-
     if n.condition?
-      iterator = n.condition.left()
-      till = n.condition.right()
+      # cover only simple ++ or -- cases
       crement = n.update?.isA('++') or n.update?.isA('--')
+
+      # only >, >=, <, <= operators allowed
       operator = '...'  if n.condition.isA('<') or n.condition.isA('>')
       operator = '..' if n.condition.isA('<=') or n.condition.isA('>=')
 
-      if n.update? and operator? and crement
-        c.add "for #{@build iterator} in [#{@build iterator}#{operator}#{@build till}]\n"
-        isForLoop = true
-      else
+      # multiple increments in update part arent' supported
+      iterator = n.update?.left()  if crement
+
+      # condition must be a simple equation
+      if operator? and iterator?
+        left = n.condition.left()
+        right = n.condition.right()
+        # detect inverted expressions: i < 10 or 10 > i
+        till = right  if left.value is iterator.value
+        till = left  if right.value is iterator.value
+
+      # find iterator in setup and get its initial value
+      if iterator?
+        # for(var i = 0, ..;
+        if n.setup?.isA('var')
+          iteratorSetup = child for child in n.setup.children when child.value is iterator.value
+          from = iteratorSetup?.initializer
+        # for(i = 0, c = 10..;
+        else if n.setup?.isA(',')
+          iteratorSetup = child for child in n.setup.children when child.left().value is iterator.value
+          from = iteratorSetup?.right()
+        # for(i = 0;
+        else if n.setup?.isA('=') and n.setup?.left().value is iterator.value
+          from = n.setup.right()
+
+       # check if loop can be transformed to "for in [..]"
+      if iterator? and operator? and from? and till?
+        # filter out iterator from setup
+        n.setup = undefined  if n.setup.isA('=')
+        if n.setup?.isA('var') or n.setup?.isA(',')
+          n.setup.children.splice n.setup.children.indexOf(iteratorSetup), 1
+          n.setup = undefined  if n.setup.children.length is 0
+
+        c.add "#{@build n.setup}\n"  if n.setup?
+        c.add "for #{@build iterator} in [#{@build from}#{operator}#{@build till}]\n"
+        c.scope @body(n.body)
+      else # while
+        c.add "#{@build n.setup}\n"  if n.setup?
         c.add "while #{@build n.condition}\n"
-    else
+        insertUpdate n.body, n  if n.update?
+        c.scope @body(n.body)
+        c.scope @body(n.update)  if n.update?
+
+    else # loop
+      c.add "#{@build n.setup}\n"  if n.setup?
       c.add "loop"
+      insertUpdate n.body, n  if n.update?
+      c.scope @body(n.body)
+      c.scope @body(n.update)  if n.update?
 
-    insertUpdate n.body, n  if n.update? and not isForLoop
-
-    c.scope @body(n.body)
-    c.scope @body(n.update)  if n.update? and not isForLoop
     @l(n)+c
 
   'for_in': (n) ->
